@@ -297,7 +297,7 @@ const App = () => {
         vColor = color;
         vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
         vDistance = -mvPosition.z;
-        gl_PointSize = size * (300.0 / vDistance);
+        gl_PointSize = size * (400.0 / vDistance);
         gl_Position = projectionMatrix * mvPosition;
       }
     `;
@@ -311,7 +311,7 @@ const App = () => {
         if (dist > 0.5) discard;
         float core = 1.0 - smoothstep(0.0, 0.2, dist);
         core = pow(core, 2.5);
-        float glow = exp(-dist * 4.5) * 0.6;
+        float glow = exp(-dist * 4.5) * 0.8;
         float depthFade = smoothstep(60.0, 25.0, vDistance);
         vec3 finalColor = vColor * (core + glow);
         float alpha = (core * 0.9 + glow * 0.5) * depthFade;

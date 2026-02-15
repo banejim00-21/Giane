@@ -311,7 +311,7 @@ const App = () => {
         if (dist > 0.5) discard;
         float core = 1.0 - smoothstep(0.0, 0.2, dist);
         core = pow(core, 2.5);
-        float glow = exp(-dist * 4.5) * 0.8;
+        float glow = exp(-dist * 4.5) * 0.7;
         float depthFade = smoothstep(60.0, 25.0, vDistance);
         vec3 finalColor = vColor * (core + glow);
         float alpha = (core * 0.9 + glow * 0.5) * depthFade;

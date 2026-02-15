@@ -353,7 +353,7 @@ const App = () => {
 
     // SPARKLES MEJORADOS (múltiples para cada dedo)
     const sparkleGeometry = new THREE.BufferGeometry();
-    const sparkleCount = 200; // Más sparkles
+    const sparkleCount = 80; // Menos sparkles, más sutiles
     const sparklePos = new Float32Array(sparkleCount * 3);
     const sparkleColors = new Float32Array(sparkleCount * 3);
     const sparkleSizes = new Float32Array(sparkleCount);
@@ -364,7 +364,7 @@ const App = () => {
       sparklePos[i * 3] = 0;
       sparklePos[i * 3 + 1] = 0;
       sparklePos[i * 3 + 2] = 0;
-      sparkleSizes[i] = Math.random() * 2.5 + 0.8;
+      sparkleSizes[i] = Math.random() * 0.4 + 0.2; // MUCHO más pequeños
       sparklePhases[i] = Math.random() * Math.PI * 2;
       sparkleFingerIds[i] = Math.floor(i / (sparkleCount / 5)); // Asignar a dedos
       
@@ -389,7 +389,7 @@ const App = () => {
     sparkleGeometry.setAttribute('size', new THREE.BufferAttribute(sparkleSizes, 1));
 
     const sparkleMaterial = new THREE.PointsMaterial({
-      size: 1.5,
+      size: 0.4, // Tamaño base MUCHO más pequeño
       transparent: true,
       opacity: 0,
       vertexColors: true,
@@ -420,7 +420,7 @@ const App = () => {
         return;
       }
 
-      sparkleMaterial.opacity = Math.min(0.85, sparkleMaterial.opacity + 0.12);
+      sparkleMaterial.opacity = Math.min(0.5, sparkleMaterial.opacity + 0.08); // Menos opacidad
       sparkleTime += 0.05;
       
       const fingers = fingerPosRef.current;

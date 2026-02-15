@@ -9,7 +9,9 @@ const App = () => {
   const [cameraActive, setCameraActive] = useState(false);
   const [currentPhrase, setCurrentPhrase] = useState(0);
   const [mediapipeLoaded, setMediapipeLoaded] = useState(false);
+  const [fingerPositions, setFingerPositions] = useState([]);
   const handPosRef = useRef({ x: 0, y: 0, z: 0 });
+  const fingerPosRef = useRef([]);
   const handsInstanceRef = useRef(null);
 
   const romanticPhrases = [
@@ -74,34 +76,112 @@ const App = () => {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     mountRef.current.appendChild(renderer.domElement);
 
-    // ESTRELLAS
+    // ESTRELLAS MEJORADAS con brillo y destellos
     const starsGeometry = new THREE.BufferGeometry();
     const starsCount = 7000;
     const starsPos = new Float32Array(starsCount * 3);
     const starsColors = new Float32Array(starsCount * 3);
     const starsSizes = new Float32Array(starsCount);
+    const starsPhases = new Float32Array(starsCount); // Para animación de parpadeo
 
     for (let i = 0; i < starsCount; i++) {
       starsPos[i * 3] = (Math.random() - 0.5) * 500;
       starsPos[i * 3 + 1] = (Math.random() - 0.5) * 500;
       starsPos[i * 3 + 2] = (Math.random() - 0.5) * 400 - 80;
-      starsSizes[i] = Math.random() * 1.5 + 0.2;
-      const brightness = 0.7 + Math.random() * 0.3;
-      starsColors[i * 3] = brightness;
-      starsColors[i * 3 + 1] = brightness;
-      starsColors[i * 3 + 2] = brightness;
+      starsSizes[i] = Math.random() * 2.5 + 0.5;
+      starsPhases[i] = Math.random() * Math.PI * 2;
+      
+      const brightness = 0.8 + Math.random() * 0.2;
+      const colorVariation = Math.random();
+      
+      // Colores variados para estrellas más realistas
+      if (colorVariation < 0.7) {
+        // Estrellas blancas/azuladas
+        starsColors[i * 3] = brightness * 0.9;
+        starsColors[i * 3 + 1] = brightness * 0.95;
+        starsColors[i * 3 + 2] = brightness;
+      } else if (colorVariation < 0.9) {
+        // Estrellas amarillas/cálidas
+        starsColors[i * 3] = brightness;
+        starsColors[i * 3 + 1] = brightness * 0.9;
+        starsColors[i * 3 + 2] = brightness * 0.7;
+      } else {
+        // Estrellas rojizas
+        starsColors[i * 3] = brightness;
+        starsColors[i * 3 + 1] = brightness * 0.7;
+        starsColors[i * 3 + 2] = brightness * 0.6;
+      }
     }
 
     starsGeometry.setAttribute('position', new THREE.BufferAttribute(starsPos, 3));
     starsGeometry.setAttribute('color', new THREE.BufferAttribute(starsColors, 3));
     starsGeometry.setAttribute('size', new THREE.BufferAttribute(starsSizes, 1));
+    starsGeometry.setAttribute('phase', new THREE.BufferAttribute(starsPhases, 1));
 
-    const starsMaterial = new THREE.PointsMaterial({
-      size: 0.8,
+    // Shader personalizado para estrellas con destellos
+    const starsVertexShader = `
+      attribute float size;
+      attribute float phase;
+      varying vec3 vColor;
+      varying float vPhase;
+      void main() {
+        vColor = color;
+        vPhase = phase;
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = size * (400.0 / -mvPosition.z);
+        gl_Position = projectionMatrix * mvPosition;
+      }
+    `;
+
+    const starsFragmentShader = `
+      varying vec3 vColor;
+      varying float vPhase;
+      uniform float time;
+      
+      void main() {
+        // Crear forma de estrella con destellos
+        vec2 center = gl_PointCoord - 0.5;
+        float dist = length(center);
+        
+        // Núcleo brillante circular
+        float core = 1.0 - smoothstep(0.0, 0.15, dist);
+        core = pow(core, 3.0);
+        
+        // Resplandor suave
+        float glow = exp(-dist * 6.0) * 0.7;
+        
+        // Destellos en cruz
+        float angle = atan(center.y, center.x);
+        float sparkle1 = abs(sin(angle * 2.0)) * (1.0 - dist * 2.0);
+        sparkle1 = pow(max(0.0, sparkle1), 4.0) * 0.5;
+        
+        float sparkle2 = abs(cos(angle * 2.0)) * (1.0 - dist * 2.0);
+        sparkle2 = pow(max(0.0, sparkle2), 4.0) * 0.5;
+        
+        // Parpadeo suave
+        float twinkle = sin(time * 2.0 + vPhase) * 0.3 + 0.7;
+        
+        // Combinar efectos
+        float brightness = (core + glow + sparkle1 + sparkle2) * twinkle;
+        
+        // Color final con brillo
+        vec3 finalColor = vColor * (1.0 + brightness * 0.5);
+        float alpha = brightness * 0.9;
+        
+        gl_FragColor = vec4(finalColor, alpha);
+      }
+    `;
+
+    const starsMaterial = new THREE.ShaderMaterial({
+      vertexShader: starsVertexShader,
+      fragmentShader: starsFragmentShader,
       transparent: true,
-      opacity: 0.6,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
       vertexColors: true,
-      sizeAttenuation: true
+      uniforms: {
+        time: { value: 0 }
+      }
     });
 
     const stars = new THREE.Points(starsGeometry, starsMaterial);
@@ -262,32 +342,41 @@ const App = () => {
     const backLight = new THREE.PointLight(0x6644aa, 0.5, 120);
     backLight.position.set(0, 0, -40);
     scene.add(backLight);
-    const handLight = new THREE.PointLight(0xff66dd, 2.5, 40);
-    scene.add(handLight);
+    
+    // Luces para cada dedo
+    const fingerLights = [];
+    for (let i = 0; i < 5; i++) {
+      const light = new THREE.PointLight(0xff66dd, 1.8, 35);
+      fingerLights.push(light);
+      scene.add(light);
+    }
 
-    // SPARKLES
+    // SPARKLES MEJORADOS (múltiples para cada dedo)
     const sparkleGeometry = new THREE.BufferGeometry();
-    const sparkleCount = 100;
+    const sparkleCount = 200; // Más sparkles
     const sparklePos = new Float32Array(sparkleCount * 3);
     const sparkleColors = new Float32Array(sparkleCount * 3);
     const sparkleSizes = new Float32Array(sparkleCount);
     const sparklePhases = new Float32Array(sparkleCount);
+    const sparkleFingerIds = new Float32Array(sparkleCount);
 
     for (let i = 0; i < sparkleCount; i++) {
       sparklePos[i * 3] = 0;
       sparklePos[i * 3 + 1] = 0;
       sparklePos[i * 3 + 2] = 0;
-      sparkleSizes[i] = Math.random() * 2.0 + 0.8;
+      sparkleSizes[i] = Math.random() * 2.5 + 0.8;
       sparklePhases[i] = Math.random() * Math.PI * 2;
+      sparkleFingerIds[i] = Math.floor(i / (sparkleCount / 5)); // Asignar a dedos
+      
       const colorChoice = Math.random();
-      if (colorChoice < 0.4) {
+      if (colorChoice < 0.3) {
+        sparkleColors[i * 3] = 1.0;
+        sparkleColors[i * 3 + 1] = 0.3;
+        sparkleColors[i * 3 + 2] = 0.5;
+      } else if (colorChoice < 0.6) {
         sparkleColors[i * 3] = 1.0;
         sparkleColors[i * 3 + 1] = 0.8;
         sparkleColors[i * 3 + 2] = 0.3;
-      } else if (colorChoice < 0.7) {
-        sparkleColors[i * 3] = 0.8;
-        sparkleColors[i * 3 + 1] = 0.4;
-        sparkleColors[i * 3 + 2] = 1.0;
       } else {
         sparkleColors[i * 3] = 0.4;
         sparkleColors[i * 3 + 1] = 0.8;
@@ -300,7 +389,7 @@ const App = () => {
     sparkleGeometry.setAttribute('size', new THREE.BufferAttribute(sparkleSizes, 1));
 
     const sparkleMaterial = new THREE.PointsMaterial({
-      size: 1.2,
+      size: 1.5,
       transparent: true,
       opacity: 0,
       vertexColors: true,
@@ -322,46 +411,76 @@ const App = () => {
     const sparkles = new THREE.Points(sparkleGeometry, sparkleMaterial);
     scene.add(sparkles);
 
-    // INTERACCIÓN
+    // INTERACCIÓN MEJORADA CON DEDOS
     let sparkleTime = 0;
     const handleHandInteraction = () => {
       if (!handDetected) {
         sparkleMaterial.opacity = Math.max(0, sparkleMaterial.opacity - 0.05);
+        fingerLights.forEach(light => light.intensity = 0);
         return;
       }
 
-      sparkleMaterial.opacity = Math.min(0.7, sparkleMaterial.opacity + 0.1);
-      sparkleTime += 0.04;
-      const handPos = handPosRef.current;
-      const influenceRadius = 12;
-      const pushStrength = 0.6;
+      sparkleMaterial.opacity = Math.min(0.85, sparkleMaterial.opacity + 0.12);
+      sparkleTime += 0.05;
+      
+      const fingers = fingerPosRef.current;
+      const influenceRadius = 10;
+      const pushStrength = 0.8;
+      const attractStrength = 0.3;
 
-      for (let i = 0; i < sparkleCount; i++) {
-        const angle = (i / sparkleCount) * Math.PI * 2 * 3;
-        const spiral = (i / sparkleCount) * 3.0;
-        const radius = 2.0 + Math.sin(sparkleTime * 2 + sparklePhases[i]) * 1.5;
-        sparklePos[i * 3] = handPos.x + Math.cos(angle + sparkleTime) * (radius + spiral);
-        sparklePos[i * 3 + 1] = handPos.y + Math.sin(sparkleTime * 1.5 + sparklePhases[i]) * 2.0;
-        sparklePos[i * 3 + 2] = handPos.z + Math.sin(angle + sparkleTime) * (radius + spiral);
-      }
-      sparkleGeometry.attributes.position.needsUpdate = true;
-
-      for (let i = 0; i < particleCount; i++) {
-        const dx = positions[i * 3] - handPos.x;
-        const dy = positions[i * 3 + 1] - handPos.y;
-        const dz = positions[i * 3 + 2] - handPos.z;
-        const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-
-        if (distance < influenceRadius) {
-          const force = ((influenceRadius - distance) / influenceRadius) * pushStrength;
-          const direction = distance > 0 ? 1 / distance : 0;
-          velocities[i * 3] += dx * direction * force;
-          velocities[i * 3 + 1] += dy * direction * force;
-          velocities[i * 3 + 2] += dz * direction * force;
+      // Actualizar sparkles por dedo
+      if (fingers.length >= 5) {
+        for (let i = 0; i < sparkleCount; i++) {
+          const fingerId = sparkleFingerIds[i];
+          if (fingerId < fingers.length) {
+            const fingerPos = fingers[fingerId];
+            const angle = (i / (sparkleCount / 5)) * Math.PI * 2 * 2;
+            const spiral = ((i % (sparkleCount / 5)) / (sparkleCount / 5)) * 2.5;
+            const radius = 1.5 + Math.sin(sparkleTime * 2.5 + sparklePhases[i]) * 1.2;
+            
+            sparklePos[i * 3] = fingerPos.x + Math.cos(angle + sparkleTime * 1.5) * (radius + spiral);
+            sparklePos[i * 3 + 1] = fingerPos.y + Math.sin(sparkleTime * 2 + sparklePhases[i]) * 1.5;
+            sparklePos[i * 3 + 2] = fingerPos.z + Math.sin(angle + sparkleTime * 1.5) * (radius + spiral);
+          }
         }
+        sparkleGeometry.attributes.position.needsUpdate = true;
+
+        // Actualizar luces de dedos
+        fingers.forEach((finger, idx) => {
+          if (idx < fingerLights.length) {
+            fingerLights[idx].position.set(finger.x, finger.y, finger.z);
+            fingerLights[idx].intensity = 1.8;
+          }
+        });
       }
 
-      handLight.position.set(handPos.x, handPos.y, handPos.z);
+      // Interacción con partículas - cada dedo tiene efecto
+      for (let i = 0; i < particleCount; i++) {
+        let totalForceX = 0, totalForceY = 0, totalForceZ = 0;
+
+        fingers.forEach((fingerPos, fingerIdx) => {
+          const dx = positions[i * 3] - fingerPos.x;
+          const dy = positions[i * 3 + 1] - fingerPos.y;
+          const dz = positions[i * 3 + 2] - fingerPos.z;
+          const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+          if (distance < influenceRadius) {
+            const force = ((influenceRadius - distance) / influenceRadius) * pushStrength;
+            const direction = distance > 0 ? 1 / distance : 0;
+            
+            // Pulgar (índice 0) atrae, otros dedos empujan
+            const multiplier = fingerIdx === 0 ? -attractStrength : 1;
+            
+            totalForceX += dx * direction * force * multiplier;
+            totalForceY += dy * direction * force * multiplier;
+            totalForceZ += dz * direction * force * multiplier;
+          }
+        });
+
+        velocities[i * 3] += totalForceX;
+        velocities[i * 3 + 1] += totalForceY;
+        velocities[i * 3 + 2] += totalForceZ;
+      }
     };
 
     // ANIMACIÓN
@@ -369,6 +488,12 @@ const App = () => {
     const animate = () => {
       requestAnimationFrame(animate);
       time += 0.01;
+      
+      // Actualizar shader de estrellas con parpadeo
+      if (starsMaterial.uniforms && starsMaterial.uniforms.time) {
+        starsMaterial.uniforms.time.value = time;
+      }
+      
       handleHandInteraction();
 
       for (let i = 0; i < particleCount; i++) {
@@ -411,7 +536,7 @@ const App = () => {
     };
   }, [handDetected]);
 
-  // MEDIAPIPE
+  // MEDIAPIPE CON DETECCIÓN DE DEDOS
   useEffect(() => {
     if (!cameraActive || !mediapipeLoaded) return;
 
@@ -439,7 +564,14 @@ const App = () => {
           minTrackingConfidence: 0.7
         });
 
-        let smoothX = 0, smoothY = 0, smoothZ = 0;
+        // Suavizado para cada dedo
+        const smoothFingers = [
+          { x: 0, y: 0, z: 0 },
+          { x: 0, y: 0, z: 0 },
+          { x: 0, y: 0, z: 0 },
+          { x: 0, y: 0, z: 0 },
+          { x: 0, y: 0, z: 0 }
+        ];
 
         hands.onResults((results) => {
           const canvasCtx = canvasElement.getContext('2d');
@@ -449,27 +581,58 @@ const App = () => {
 
           if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
             const hand = results.multiHandLandmarks[0];
+            
+            // Puntas de los dedos: Pulgar(4), Índice(8), Medio(12), Anular(16), Meñique(20)
+            const fingerTips = [4, 8, 12, 16, 20];
+            const newFingerPositions = [];
+
+            fingerTips.forEach((tipIndex, i) => {
+              const tip = hand[tipIndex];
+              
+              const targetX = (tip.x - 0.5) * 42;
+              const targetY = -(tip.y - 0.5) * 42;
+              const targetZ = -tip.z * 26;
+
+              smoothFingers[i].x += (targetX - smoothFingers[i].x) * 0.25;
+              smoothFingers[i].y += (targetY - smoothFingers[i].y) * 0.25;
+              smoothFingers[i].z += (targetZ - smoothFingers[i].z) * 0.25;
+
+              newFingerPositions.push({ ...smoothFingers[i] });
+
+              // Dibujar puntas de dedos
+              canvasCtx.fillStyle = i === 0 ? '#ff00ff' : '#00ff00';
+              canvasCtx.beginPath();
+              canvasCtx.arc(tip.x * canvasElement.width, tip.y * canvasElement.height, 5, 0, 2 * Math.PI);
+              canvasCtx.fill();
+            });
+
+            fingerPosRef.current = newFingerPositions;
+            setFingerPositions(newFingerPositions);
+            
+            // Palm para referencia
             const palm = hand[9];
-
-            const targetX = (palm.x - 0.5) * 42;
-            const targetY = -(palm.y - 0.5) * 42;
-            const targetZ = -palm.z * 26;
-
-            smoothX += (targetX - smoothX) * 0.22;
-            smoothY += (targetY - smoothY) * 0.22;
-            smoothZ += (targetZ - smoothZ) * 0.22;
-
-            handPosRef.current = { x: smoothX, y: smoothY, z: smoothZ };
+            const palmX = (palm.x - 0.5) * 42;
+            const palmY = -(palm.y - 0.5) * 42;
+            const palmZ = -palm.z * 26;
+            handPosRef.current = { x: palmX, y: palmY, z: palmZ };
+            
             setHandDetected(true);
 
-            hand.forEach((landmark) => {
-              canvasCtx.fillStyle = '#00ff00';
-              canvasCtx.beginPath();
-              canvasCtx.arc(landmark.x * canvasElement.width, landmark.y * canvasElement.height, 3, 0, 2 * Math.PI);
-              canvasCtx.fill();
+            // Dibujar líneas de la mano
+            canvasCtx.strokeStyle = 'rgba(0, 255, 255, 0.5)';
+            canvasCtx.lineWidth = 2;
+            hand.forEach((landmark, idx) => {
+              if (idx > 0) {
+                const prev = hand[idx - 1];
+                canvasCtx.beginPath();
+                canvasCtx.moveTo(prev.x * canvasElement.width, prev.y * canvasElement.height);
+                canvasCtx.lineTo(landmark.x * canvasElement.width, landmark.y * canvasElement.height);
+                canvasCtx.stroke();
+              }
             });
           } else {
             setHandDetected(false);
+            setFingerPositions([]);
           }
           canvasCtx.restore();
         });
@@ -524,121 +687,220 @@ const App = () => {
   const isMobile = window.innerWidth <= 768;
   const isTablet = window.innerWidth > 768 && window.innerWidth <= 1024;
 
+  // Corazones flotantes más numerosos
+  const floatingHearts = [
+    // Esquina superior derecha
+    { top: '22px', right: '28px', size: '24px', emoji: '💕', delay: 0, duration: 3 },
+    { top: '55px', right: '50px', size: '20px', emoji: '💖', delay: 0.5, duration: 3.5 },
+    { top: '88px', right: '32px', size: '18px', emoji: '❤️', delay: 1.0, duration: 3.2 },
+    { top: '120px', right: '45px', size: '16px', emoji: '💗', delay: 1.5, duration: 3.8 },
+    
+    // Esquina superior izquierda
+    { top: '30px', left: '35px', size: '22px', emoji: '💝', delay: 0.3, duration: 3.3 },
+    { top: '65px', left: '20px', size: '19px', emoji: '💓', delay: 0.8, duration: 3.6 },
+    { top: '100px', left: '40px', size: '17px', emoji: '💞', delay: 1.3, duration: 3.1 },
+    
+    // Lado derecho medio
+    { top: '45%', right: '25px', size: '21px', emoji: '💕', delay: 0.2, duration: 3.4 },
+    { top: '55%', right: '40px', size: '18px', emoji: '❤️', delay: 0.7, duration: 3.7 },
+    
+    // Lado izquierdo medio  
+    { top: '48%', left: '30px', size: '20px', emoji: '💖', delay: 0.4, duration: 3.5 },
+    { top: '58%', left: '20px', size: '17px', emoji: '💗', delay: 0.9, duration: 3.3 },
+    
+    // Esquina inferior derecha
+    { bottom: '120px', right: '35px', size: '19px', emoji: '💓', delay: 0.6, duration: 3.6 },
+    { bottom: '150px', right: '20px', size: '16px', emoji: '💞', delay: 1.1, duration: 3.2 },
+    
+    // Esquina inferior izquierda
+    { bottom: '130px', left: '28px', size: '18px', emoji: '💝', delay: 0.5, duration: 3.4 },
+    { bottom: '160px', left: '45px', size: '15px', emoji: '💕', delay: 1.0, duration: 3.8 },
+  ];
+
   return (
     <div style={{ width: '100%', height: '100vh', overflow: 'hidden', position: 'relative', background: '#000205' }}>
       <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
       <video ref={videoRef} style={{ display: 'none' }} autoPlay playsInline />
       
+      {/* Cámara: visible en PC, invisible en móvil */}
       <canvas ref={canvasRef} width="160" height="120" style={{
-        position: 'fixed', bottom: '20px', right: '20px',
+        position: 'fixed', 
+        bottom: '20px', 
+        right: '20px',
         display: cameraActive ? 'block' : 'none',
-        border: '2px solid rgba(255,255,255,0.3)', borderRadius: '10px', zIndex: 1001,
-        opacity: 0.1  // Añade esta línea (0 = invisible, 1 = opaco)
-  
+        border: '2px solid rgba(255,255,255,0.3)', 
+        borderRadius: '10px', 
+        zIndex: 1001,
+        opacity: isMobile ? 0 : 0.8  // Invisible en móvil, visible en PC
       }} />
 
+      {/* Mensaje especial Feliz 14 */}
+      <div style={{
+        position: 'fixed',
+        top: isMobile ? '20px' : '80px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 999,
+        textAlign: 'center',
+        padding: isMobile ? '12px 20px' : '16px 35px',
+        background: 'linear-gradient(135deg, rgba(255,20,147,0.15) 0%, rgba(138,43,226,0.15) 100%)',
+        backdropFilter: 'blur(15px)',
+        borderRadius: '20px',
+        border: '2px solid rgba(255,105,180,0.4)',
+        boxShadow: '0 8px 32px rgba(255,20,147,0.3)',
+        animation: 'heartbeat 2s ease-in-out infinite'
+      }}>
+        <h2 style={{
+          margin: 0,
+          fontSize: isMobile ? '20px' : '28px',
+          fontFamily: "'Pacifico', cursive",
+          background: 'linear-gradient(120deg, #ff1493 0%, #ff69b4 50%, #ff1493 100%)',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+          letterSpacing: '1px',
+          fontWeight: '400',
+          textShadow: '0 0 20px rgba(255,20,147,0.5)'
+        }}>
+          ¡Feliz 14, mi amor! 💕
+        </h2>
+        <p style={{
+          margin: '8px 0 0 0',
+          fontSize: isMobile ? '13px' : '15px',
+          color: 'rgba(255,255,255,0.9)',
+          fontFamily: 'Georgia, serif',
+          fontStyle: 'italic'
+        }}>
+          Te amo infinitamente, Gianella 💖✨
+        </p>
+      </div>
+
+      {/* Nombre de Gianella */}
       <div style={{
         position: 'fixed',
         bottom: isMobile ? 'auto' : '50%',
-        top: isMobile ? '90px' : 'auto',
+        top: isMobile ? '140px' : 'auto',
         left: isMobile ? '50%' : 'auto',
         right: isMobile ? 'auto' : '50px',
         transform: isMobile ? 'translateX(-50%)' : 'translateY(50%)',
-        zIndex: 1000, pointerEvents: 'none', textAlign: isMobile ? 'center' : 'right'
+        zIndex: 1000, 
+        pointerEvents: 'none', 
+        textAlign: isMobile ? 'center' : 'right'
       }}>
         <h1 style={{
           margin: 0,
-          fontSize: isMobile ? '24px' : (isTablet ? '40px' : '52px'),
-          fontFamily: "'Brush Script MT', 'Pacifico', cursive",
+          fontSize: isMobile ? '26px' : (isTablet ? '42px' : '56px'),
+          fontFamily: "'Pacifico', cursive",
           fontWeight: '400',
           background: 'linear-gradient(120deg, #ffd89b 0%, #e8be8a 50%, #d4a574 100%)',
           WebkitBackgroundClip: 'text',
           WebkitTextFillColor: 'transparent',
           letterSpacing: '0.5px',
-          filter: 'drop-shadow(0 2px 12px rgba(255, 216, 155, 0.4))',
+          filter: 'drop-shadow(0 2px 12px rgba(255, 216, 155, 0.5))',
           fontStyle: 'italic'
         }}>
           Gianella Bustamante
         </h1>
       </div>
 
-      {!isMobile && [
-        { top: '22px', right: '28px', size: '22px', emoji: '💕', delay: 0 },
-        { top: '55px', right: '50px', size: '19px', emoji: '💖', delay: 0.5 },
-        { top: '88px', right: '32px', size: '16px', emoji: '❤️', delay: 1.0 }
-      ].map((heart, i) => (
+      {/* Corazones flotantes - solo en PC */}
+      {!isMobile && floatingHearts.map((heart, i) => (
         <div key={i} style={{
-          position: 'fixed', top: heart.top, right: heart.right,
-          fontSize: heart.size, opacity: 0.6,
-          animation: `float 3s ease-in-out infinite ${heart.delay}s`,
-          zIndex: 999, pointerEvents: 'none',
-          filter: 'drop-shadow(0 0 6px rgba(255, 105, 180, 0.5))'
+          position: 'fixed', 
+          top: heart.top, 
+          bottom: heart.bottom,
+          right: heart.right, 
+          left: heart.left,
+          fontSize: heart.size, 
+          opacity: 0.7,
+          animation: `float ${heart.duration}s ease-in-out infinite ${heart.delay}s`,
+          zIndex: 999, 
+          pointerEvents: 'none',
+          filter: 'drop-shadow(0 0 8px rgba(255, 105, 180, 0.6))'
         }}>
           {heart.emoji}
         </div>
       ))}
 
+      {/* Botón de activación - pequeño en esquina */}
       {!cameraActive ? (
         <button onClick={startCamera} disabled={!mediapipeLoaded} style={{
           position: 'fixed',
-          top: isMobile ? '18px' : '25px',
-          left: '50%',
-          transform: 'translateX(-50%)',
+          top: isMobile ? '15px' : '20px',
+          left: isMobile ? '15px' : '20px',
           zIndex: 1000,
-          padding: isMobile ? '12px 24px' : '14px 34px',
-          background: mediapipeLoaded ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' : '#666',
-          border: 'none', borderRadius: '50px', color: 'white',
-          fontSize: isMobile ? '13px' : '14px',
-          fontWeight: '700',
+          padding: isMobile ? '8px 16px' : '10px 20px',
+          background: mediapipeLoaded 
+            ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' 
+            : '#666',
+          border: 'none', 
+          borderRadius: '25px', 
+          color: 'white',
+          fontSize: isMobile ? '11px' : '12px',
+          fontWeight: '600',
           cursor: mediapipeLoaded ? 'pointer' : 'not-allowed',
-          boxShadow: '0 6px 28px rgba(102, 126, 234, 0.45)',
-          fontFamily: 'system-ui', letterSpacing: '0.5px',
-          textTransform: 'uppercase', transition: 'all 0.3s ease',
-          opacity: mediapipeLoaded ? 1 : 0.6
+          boxShadow: '0 4px 16px rgba(102, 126, 234, 0.4)',
+          fontFamily: 'system-ui', 
+          letterSpacing: '0.3px',
+          transition: 'all 0.3s ease',
+          opacity: mediapipeLoaded ? 0.9 : 0.5
         }}>
-          {mediapipeLoaded ? '✨ Activar Interacción' : '⏳ Cargando...'}
+          {mediapipeLoaded ? '✨ Activar' : '⏳'}
         </button>
       ) : (
         <div style={{
           position: 'fixed',
-          top: isMobile ? '18px' : '25px',
-          left: '50%', transform: 'translateX(-50%)', zIndex: 1000,
-          padding: isMobile ? '11px 22px' : '13px 28px',
-          background: handDetected ? 'rgba(74,222,128,0.13)' : 'rgba(248,113,113,0.13)',
+          top: isMobile ? '15px' : '20px',
+          left: isMobile ? '15px' : '20px',
+          zIndex: 1000,
+          padding: isMobile ? '8px 14px' : '9px 18px',
+          background: handDetected 
+            ? 'rgba(74,222,128,0.15)' 
+            : 'rgba(248,113,113,0.15)',
           backdropFilter: 'blur(12px)',
-          border: `1.5px solid ${handDetected ? 'rgba(74,222,128,0.4)' : 'rgba(248,113,113,0.4)'}`,
-          borderRadius: '50px', color: 'white',
-          fontSize: isMobile ? '13px' : '14px',
-          fontWeight: '700', fontFamily: 'system-ui',
-          letterSpacing: '0.4px',
-          boxShadow: handDetected ? '0 0 22px rgba(74,222,128,0.35)' : '0 0 22px rgba(248,113,113,0.35)'
+          border: `2px solid ${handDetected ? 'rgba(74,222,128,0.5)' : 'rgba(248,113,113,0.5)'}`,
+          borderRadius: '25px', 
+          color: 'white',
+          fontSize: isMobile ? '10px' : '11px',
+          fontWeight: '600', 
+          fontFamily: 'system-ui',
+          letterSpacing: '0.3px',
+          boxShadow: handDetected 
+            ? '0 0 20px rgba(74,222,128,0.4)' 
+            : '0 0 20px rgba(248,113,113,0.4)',
+          textAlign: 'center'
         }}>
-          {handDetected ? '✨ ¡Mueve Saturno!' : '👋 Muestra tu mano'}
+          {handDetected 
+            ? `✨ ${fingerPositions.length} dedos` 
+            : '👋 Mano'}
         </div>
       )}
 
+      {/* Frases románticas */}
       <div style={{
         position: 'fixed',
-        bottom: isMobile ? '18px' : '32px',
-        left: '50%', transform: 'translateX(-50%)', zIndex: 1000,
+        bottom: isMobile ? '20px' : '32px',
+        left: '50%', 
+        transform: 'translateX(-50%)', 
+        zIndex: 1000,
         textAlign: 'center',
-        maxWidth: isMobile ? '93%' : (isTablet ? '86%' : '620px'),
-        padding: isMobile ? '13px 20px' : '16px 30px',
-        background: 'rgba(8,12,22,0.5)',
+        maxWidth: isMobile ? '93%' : (isTablet ? '86%' : '640px'),
+        padding: isMobile ? '14px 22px' : '18px 35px',
+        background: 'rgba(8,12,22,0.55)',
         backdropFilter: 'blur(20px)',
-        borderRadius: '16px',
-        border: '1px solid rgba(255,255,255,0.12)',
-        boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+        borderRadius: '18px',
+        border: '1px solid rgba(255,255,255,0.15)',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
         animation: 'phraseSlide 1s ease-out'
       }}>
         <p style={{
           margin: 0,
-          fontSize: isMobile ? '14px' : (isTablet ? '15px' : '16px'),
+          fontSize: isMobile ? '15px' : (isTablet ? '16px' : '17px'),
           fontFamily: 'Georgia, serif',
           color: 'rgba(255,255,255,0.95)',
-          fontWeight: '400', lineHeight: '1.6',
-          letterSpacing: '0.2px',
-          textShadow: '0 2px 12px rgba(0,0,0,0.7)',
+          fontWeight: '400', 
+          lineHeight: '1.7',
+          letterSpacing: '0.3px',
+          textShadow: '0 2px 12px rgba(0,0,0,0.8)',
           fontStyle: 'italic'
         }}>
           {romanticPhrases[currentPhrase]}
@@ -647,15 +909,46 @@ const App = () => {
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Pacifico&display=swap');
+        
         @keyframes float {
-          0%, 100% { transform: translateY(0px) rotate(0deg); }
-          50% { transform: translateY(-8px) rotate(5deg); }
+          0%, 100% { 
+            transform: translateY(0px) rotate(0deg) scale(1); 
+          }
+          25% { 
+            transform: translateY(-10px) rotate(5deg) scale(1.05); 
+          }
+          50% { 
+            transform: translateY(-15px) rotate(-3deg) scale(1.1); 
+          }
+          75% { 
+            transform: translateY(-8px) rotate(7deg) scale(1.05); 
+          }
         }
+        
+        @keyframes heartbeat {
+          0%, 100% { 
+            transform: translateX(-50%) scale(1); 
+          }
+          50% { 
+            transform: translateX(-50%) scale(1.05); 
+          }
+        }
+        
         @keyframes phraseSlide {
-          0% { opacity: 0; transform: translateX(-50%) translateY(12px); }
-          100% { opacity: 1; transform: translateX(-50%) translateY(0); }
+          0% { 
+            opacity: 0; 
+            transform: translateX(-50%) translateY(15px); 
+          }
+          100% { 
+            opacity: 1; 
+            transform: translateX(-50%) translateY(0); 
+          }
         }
-        * { -webkit-tap-highlight-color: transparent; user-select: none; }
+        
+        * { 
+          -webkit-tap-highlight-color: transparent; 
+          user-select: none; 
+        }
       `}</style>
     </div>
   );

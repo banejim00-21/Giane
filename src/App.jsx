@@ -529,10 +529,12 @@ const App = () => {
       <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
       <video ref={videoRef} style={{ display: 'none' }} autoPlay playsInline />
       
-      <canvas ref={canvasRef} width="320" height="240" style={{
+      <canvas ref={canvasRef} width="160" height="120" style={{
         position: 'fixed', bottom: '20px', right: '20px',
         display: cameraActive ? 'block' : 'none',
-        border: '2px solid rgba(255,255,255,0.3)', borderRadius: '10px', zIndex: 1001
+        border: '2px solid rgba(255,255,255,0.3)', borderRadius: '10px', zIndex: 1001,
+        opacity: 0.1  // Añade esta línea (0 = invisible, 1 = opaco)
+  
       }} />
 
       <div style={{

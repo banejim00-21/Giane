@@ -351,76 +351,16 @@ const App = () => {
       scene.add(light);
     }
 
-    // SPARKLES MEJORADOS (múltiples para cada dedo)
-    const sparkleGeometry = new THREE.BufferGeometry();
-    const sparkleCount = 10; // Menos sparkles, más sutiles
-    const sparklePos = new Float32Array(sparkleCount * 3);
-    const sparkleColors = new Float32Array(sparkleCount * 3);
-    const sparkleSizes = new Float32Array(sparkleCount);
-    const sparklePhases = new Float32Array(sparkleCount);
-    const sparkleFingerIds = new Float32Array(sparkleCount);
 
-    for (let i = 0; i < sparkleCount; i++) {
-      sparklePos[i * 3] = 0;
-      sparklePos[i * 3 + 1] = 0;
-      sparklePos[i * 3 + 2] = 0;
-      sparkleSizes[i] = Math.random() * 0.1 + 0.1; // MUCHO más pequeños
-      sparklePhases[i] = Math.random() * Math.PI * 2;
-      sparkleFingerIds[i] = Math.floor(i / (sparkleCount / 5)); // Asignar a dedos
-      
-      const colorChoice = Math.random();
-      if (colorChoice < 0.3) {
-        sparkleColors[i * 3] = 1.0;
-        sparkleColors[i * 3 + 1] = 0.3;
-        sparkleColors[i * 3 + 2] = 0.5;
-      } else if (colorChoice < 0.6) {
-        sparkleColors[i * 3] = 1.0;
-        sparkleColors[i * 3 + 1] = 0.8;
-        sparkleColors[i * 3 + 2] = 0.3;
-      } else {
-        sparkleColors[i * 3] = 0.4;
-        sparkleColors[i * 3 + 1] = 0.8;
-        sparkleColors[i * 3 + 2] = 1.0;
-      }
-    }
-
-    sparkleGeometry.setAttribute('position', new THREE.BufferAttribute(sparklePos, 3));
-    sparkleGeometry.setAttribute('color', new THREE.BufferAttribute(sparkleColors, 3));
-    sparkleGeometry.setAttribute('size', new THREE.BufferAttribute(sparkleSizes, 1));
-
-    const sparkleMaterial = new THREE.PointsMaterial({
-      size: 0.4, // Tamaño base MUCHO más pequeño
-      transparent: true,
-      opacity: 0,
-      vertexColors: true,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-
-    sparkleMaterial.onBeforeCompile = (shader) => {
-      shader.fragmentShader = shader.fragmentShader.replace(
-        `#include <output_fragment>`,
-        `vec2 cxy = 2.0 * gl_PointCoord - 1.0;
-        float r = dot(cxy, cxy);
-        if (r > 1.0) discard;
-        float strength = 1.0 - r;
-        gl_FragColor = vec4(diffuseColor.rgb, strength * opacity);`
-      );
-    };
-
-    const sparkles = new THREE.Points(sparkleGeometry, sparkleMaterial);
-    scene.add(sparkles);
 
     // INTERACCIÓN MEJORADA CON DEDOS
     let sparkleTime = 0;
     const handleHandInteraction = () => {
       if (!handDetected) {
-        sparkleMaterial.opacity = Math.max(0, sparkleMaterial.opacity - 0.05);
         fingerLights.forEach(light => light.intensity = 0);
         return;
       }
 
-      sparkleMaterial.opacity = Math.min(0.5, sparkleMaterial.opacity + 0.02); // Menos opacidad
       sparkleTime += 0.05;
       
       const fingers = fingerPosRef.current;
@@ -428,24 +368,8 @@ const App = () => {
       const pushStrength = 0.8;
       const attractStrength = 0.3;
 
-      // Actualizar sparkles por dedo
+      // Actualizar luces de dedos
       if (fingers.length >= 5) {
-        for (let i = 0; i < sparkleCount; i++) {
-          const fingerId = sparkleFingerIds[i];
-          if (fingerId < fingers.length) {
-            const fingerPos = fingers[fingerId];
-            const angle = (i / (sparkleCount / 5)) * Math.PI * 2 * 2;
-            const spiral = ((i % (sparkleCount / 5)) / (sparkleCount / 5)) * 2.5;
-            const radius = 1.5 + Math.sin(sparkleTime * 2.5 + sparklePhases[i]) * 1.2;
-            
-            sparklePos[i * 3] = fingerPos.x + Math.cos(angle + sparkleTime * 1.5) * (radius + spiral);
-            sparklePos[i * 3 + 1] = fingerPos.y + Math.sin(sparkleTime * 2 + sparklePhases[i]) * 1.5;
-            sparklePos[i * 3 + 2] = fingerPos.z + Math.sin(angle + sparkleTime * 1.5) * (radius + spiral);
-          }
-        }
-        sparkleGeometry.attributes.position.needsUpdate = true;
-
-        // Actualizar luces de dedos
         fingers.forEach((finger, idx) => {
           if (idx < fingerLights.length) {
             fingerLights[idx].position.set(finger.x, finger.y, finger.z);
